@@ -1,0 +1,175 @@
+<!-- ===== templates/index.html ===== -->
+{% extends "base.html" %}
+
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+    .code-editor {
+        font-family: 'Courier New', monospace;
+        font-size: 14px;
+        border-radius: 8px;
+    }
+    .preview-container {
+        border: 2px dashed #dee2e6;
+        border-radius: 8px;
+        min-height: 300px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background-color: #f8f9fa;
+    }
+    .conversion-result {
+        display: none;
+        margin-top: 20px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-6">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-code me-2"></i>
+                    Mermaid Diagram Code
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label for="mermaidCode" class="form-label">Enter your Mermaid diagram code:</label>
+                    <textarea
+                        id="mermaidCode"
+                        class="form-control code-editor"
+                        rows="15"
+                        placeholder="flowchart TD
+    A[Start] --> B{Decision}
+    B -->|Yes| C[Action 1]
+    B -->|No| D[Action 2]
+    C --> E[End]
+    D --> E">flowchart TD
+    A[Start] --> B{Decision}
+    B -->|Yes| C[Action 1]
+    B -->|No| D[Action 2]
+    C --> E[End]
+    D --> E</textarea>
+                </div>
+
+                <div class="row g-2">
+                    <div class="col-md-6">
+                        <button id="parseBtn" class="btn btn-outline-primary w-100">
+                            <i class="fas fa-search me-2"></i>Parse & Validate
+                        </button>
+                    </div>
+                    <div class="col-md-6">
+                        <button id="previewBtn" class="btn btn-outline-secondary w-100">
+                            <i class="fas fa-eye me-2"></i>Preview Diagram
+                        </button>
+                    </div>
+                </div>
+
+                <div id="parseResult" class="mt-3"></div>
+
+                <div class="conversion-section mt-4">
+                    <h6><i class="fas fa-exchange-alt me-2"></i>Convert to Platform</h6>
+                    <div class="row g-2">
+                        <div class="col-md-8">
+                            <select id="targetPlatform" class="form-select">
+                                <option value="">Select platform...</option>
+                                <option value="miro">Miro</option>
+                                <option value="lucidchart" disabled>Lucidchart (Coming Soon)</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <button id="convertBtn" class="btn btn-success w-100" disabled>
+                                <i class="fas fa-magic me-2"></i>Convert
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="mt-2">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="autoPreview" checked>
+                            <label class="form-check-label" for="autoPreview">
+                                Auto-preview on code change
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-6">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-eye me-2"></i>
+                    Diagram Preview
+                </h5>
+            </div>
+            <div class="card-body">
+                <div id="diagramPreview" class="preview-container">
+                    <div class="text-muted">
+                        <i class="fas fa-image fa-3x mb-3"></i>
+                        <p>Diagram preview will appear here</p>
+                        <p class="small">Click "Preview Diagram" or enable auto-preview</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Conversion Result Modal -->
+<div class="modal fade" id="conversionModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="fas fa-check-circle text-success me-2"></i>
+                    Conversion Complete!
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="conversionResult"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <a id="openDiagramBtn" href="#" class="btn btn-primary" target="_blank">
+                    <i class="fas fa-external-link-alt me-2"></i>Open Diagram
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- History Modal -->
+<div class="modal fade" id="historyModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="fas fa-history me-2"></i>
+                    Conversion History
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="historyContent">
+                    <div class="text-center">
+                        <div class="spinner-border" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='js/diagram.js') }}"></script>
+{% endblock %}

@@ -1,0 +1,33 @@
+services:
+  web:
+    environment:
+      - FLASK_ENV=production
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/mermaid_converter
+      - SECRET_KEY=${SECRET_KEY}
+    restart: always
+
+  db:
+    environment:
+      POSTGRES_DB: mermaid_converter
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backups:/backups  # For database backups
+    restart: always
+
+  # Add nginx for production
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf
+      - ./ssl:/etc/nginx/ssl  # SSL certificates
+    depends_on:
+      - web
+    restart: always
+
+volumes:
+  postgres_data:

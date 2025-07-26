@@ -1,0 +1,193 @@
+<!-- ===== templates/admin/dashboard.html ===== -->
+{% extends "admin/base.html" %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h2><i class="fas fa-tachometer-alt me-2"></i>Admin Dashboard</h2>
+        <p class="text-muted">Manage platform configurations and monitor system status.</p>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card bg-primary text-white">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h5>{{ platforms|length }}</h5>
+                        <p class="mb-0">Platforms</p>
+                    </div>
+                    <i class="fas fa-plug fa-2x"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-success text-white">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h5>{{ recent_conversions|length }}</h5>
+                        <p class="mb-0">Recent Conversions</p>
+                    </div>
+                    <i class="fas fa-exchange-alt fa-2x"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-warning text-white">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h5>{{ platforms|selectattr('is_active')|list|length }}</h5>
+                        <p class="mb-0">Active Platforms</p>
+                    </div>
+                    <i class="fas fa-check-circle fa-2x"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-info text-white">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h5>Online</h5>
+                        <p class="mb-0">System Status</p>
+                    </div>
+                    <i class="fas fa-server fa-2x"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-plug me-2"></i>Platform Configurations
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Platform</th>
+                                <th>Status</th>
+                                <th>Last Tested</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for platform in platforms %}
+                            <tr>
+                                <td>
+                                    <i class="fas fa-{% if platform.platform == 'miro' %}project-diagram{% else %}chart-bar{% endif %} me-2"></i>
+                                    {{ platform.platform.title() }}
+                                </td>
+                                <td>
+                                    {% if platform.is_active %}
+                                        <span class="badge bg-success">Active</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">Inactive</span>
+                                    {% endif %}
+                                    {% if platform.client_id and platform.client_secret %}
+                                        <span class="badge bg-primary">Configured</span>
+                                    {% else %}
+                                        <span class="badge bg-warning">Not Configured</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if platform.last_tested %}
+                                        {{ platform.last_tested.strftime('%Y-%m-%d %H:%M') }}
+                                    {% else %}
+                                        Never
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <a href="{{ url_for('admin_platform_config', platform=platform.platform) }}"
+                                       class="btn btn-sm btn-outline-primary">
+                                        <i class="fas fa-edit"></i> Configure
+                                    </a>
+                                    {% if platform.client_id and platform.client_secret %}
+                                    <button class="btn btn-sm btn-outline-success"
+                                            onclick="testPlatform('{{ platform.platform }}')">
+                                        <i class="fas fa-check"></i> Test
+                                    </button>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="mt-3">
+                    <a href="{{ url_for('admin_platform_config', platform='miro') }}" class="btn btn-primary">
+                        <i class="fas fa-plus me-2"></i>Configure Miro
+                    </a>
+                    <a href="{{ url_for('admin_platform_config', platform='lucidchart') }}" class="btn btn-outline-primary">
+                        <i class="fas fa-plus me-2"></i>Configure Lucidchart
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-history me-2"></i>Recent Activity
+                </h5>
+            </div>
+            <div class="card-body">
+                {% if recent_conversions %}
+                    {% for conversion in recent_conversions %}
+                    <div class="d-flex align-items-center mb-3">
+                        <div class="flex-shrink-0">
+                            {% if conversion.status == 'success' %}
+                                <i class="fas fa-check-circle text-success"></i>
+                            {% else %}
+                                <i class="fas fa-times-circle text-danger"></i>
+                            {% endif %}
+                        </div>
+                        <div class="flex-grow-1 ms-3">
+                            <div class="fw-bold">{{ conversion.target_platform.title() }}</div>
+                            <div class="text-muted small">
+                                {{ conversion.created_at.strftime('%m/%d %H:%M') }}
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <p class="text-muted">No recent conversions</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function testPlatform(platform) {
+    fetch(`/admin/test/${platform}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert(`✅ ${platform} connection successful!\n${data.result.message}`);
+            } else {
+                alert(`❌ ${platform} connection failed:\n${data.error}`);
+            }
+        })
+        .catch(error => {
+            alert(`❌ Error testing ${platform}:\n${error.message}`);
+        });
+}
+</script>
+{% endblock %}
+

@@ -1,0 +1,15 @@
+services:
+  web:
+    environment:
+      - FLASK_ENV=development
+      - DATABASE_URL=postgresql://postgres:devpassword@db:5432/mermaid_converter_dev
+    volumes:
+      - .:/app  # Mount source code for hot reload
+    command: python app.py
+
+  db:
+    environment:
+      POSTGRES_DB: mermaid_converter_dev
+      POSTGRES_PASSWORD: devpassword
+    ports:
+      - "5433:5432"  # Different port for dev to avoid conflicts
