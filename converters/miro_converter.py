@@ -1,32 +1,157 @@
-# ===== converters/miro_converter.py =====
+# ===== converters/miro_converter.py (Updated) =====
 import requests
 import json
 import time
+import urllib.parse
 from typing import Dict, Any, List, Optional
 from .base_converter import BaseConverter, ConversionError
 
 class MiroConverter(BaseConverter):
-    """Converter for Miro platform using REST API v2"""
+    """Converter for Miro platform with OAuth 2.0 and Personal Access Token support"""
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         self.base_url = "https://api.miro.com/v2"
-        self.access_token = config.get('access_token') or config.get('client_secret')
+        self.oauth_url = "https://miro.com/oauth"
 
+        # Determine authentication method
+        self.access_token = config.get('access_token')
+        self.client_id = config.get('client_id')
+        self.client_secret = config.get('client_secret')
+        self.redirect_uri = config.get('redirect_uri') or config.get('redirect_url')
+        self.refresh_token = config.get('refresh_token')
+
+        # Validate configuration
+        self._validate_auth_config()
+
+    def _validate_auth_config(self):
+        """Validate authentication configuration"""
+        has_access_token = bool(self.access_token)
+        has_oauth_creds = bool(self.client_id and self.client_secret)
+
+        if not has_access_token and not has_oauth_creds:
+            raise ConversionError(
+                "Miro authentication not configured. Provide either:\n"
+                "1. Personal Access Token (access_token), or\n"
+                "2. OAuth credentials (client_id + client_secret + redirect_uri)"
+            )
+
+        if has_oauth_creds and not self.redirect_uri:
+            raise ConversionError(
+                "OAuth flow requires redirect_uri when using client_id and client_secret"
+            )
+
+    def get_auth_url(self, state: str = None) -> str:
+        """
+        Generate OAuth authorization URL for user consent
+
+        Args:
+            state: Optional state parameter for security
+
+        Returns:
+            Authorization URL to redirect users to
+        """
+        if not self.client_id or not self.redirect_uri:
+            raise ConversionError("OAuth not configured - missing client_id or redirect_uri")
+
+        params = {
+            'response_type': 'code',
+            'client_id': self.client_id,
+            'redirect_uri': self.redirect_uri,
+            'scope': 'boards:read boards:write'  # Adjust scopes as needed
+        }
+
+        if state:
+            params['state'] = state
+
+        query_string = urllib.parse.urlencode(params)
+        return f"{self.oauth_url}/authorize?{query_string}"
+
+    def exchange_code_for_token(self, authorization_code: str) -> Dict[str, Any]:
+        """
+        Exchange authorization code for access token
+
+        Args:
+            authorization_code: Code received from OAuth callback
+
+        Returns:
+            Token response with access_token, refresh_token, etc.
+        """
+        if not self.client_id or not self.client_secret:
+            raise ConversionError("OAuth not configured - missing client credentials")
+
+        token_data = {
+            'grant_type': 'authorization_code',
+            'client_id': self.client_id,
+            'client_secret': self.client_secret,
+            'code': authorization_code,
+            'redirect_uri': self.redirect_uri
+        }
+
+        try:
+            response = requests.post(
+                f"{self.oauth_url}/token",
+                data=token_data,
+                headers={'Content-Type': 'application/x-www-form-urlencoded'}
+            )
+            response.raise_for_status()
+
+            token_response = response.json()
+
+            # Store the new access token
+            self.access_token = token_response.get('access_token')
+            self.refresh_token = token_response.get('refresh_token')
+
+            return token_response
+
+        except requests.exceptions.RequestException as e:
+            raise ConversionError(f"Failed to exchange code for token: {str(e)}")
+
+    def refresh_access_token(self) -> Dict[str, Any]:
+        """
+        Refresh access token using refresh token
+
+        Returns:
+            New token response
+        """
+        if not self.refresh_token:
+            raise ConversionError("No refresh token available")
+
+        if not self.client_id or not self.client_secret:
+            raise ConversionError("OAuth not configured - missing client credentials")
+
+        refresh_data = {
+            'grant_type': 'refresh_token',
+            'client_id': self.client_id,
+            'client_secret': self.client_secret,
+            'refresh_token': self.refresh_token
+        }
+
+        try:
+            response = requests.post(
+                f"{self.oauth_url}/token",
+                data=refresh_data,
+                headers={'Content-Type': 'application/x-www-form-urlencoded'}
+            )
+            response.raise_for_status()
+
+            token_response = response.json()
+
+            # Update tokens
+            self.access_token = token_response.get('access_token')
+            if 'refresh_token' in token_response:
+                self.refresh_token = token_response.get('refresh_token')
+
+            return token_response
+
+        except requests.exceptions.RequestException as e:
+            raise ConversionError(f"Failed to refresh access token: {str(e)}")
+
+    def _make_request(self, method: str, endpoint: str, data: Dict = None, params: Dict = None, retry_on_auth_error: bool = True) -> Dict:
+        """Make authenticated request to Miro API with automatic token refresh"""
         if not self.access_token:
-            raise ConversionError("Miro access token not provided in configuration")
+            raise ConversionError("No access token available. Please authenticate first.")
 
-    def validate_config(self):
-        """Validate Miro-specific configuration"""
-        super().validate_config()
-
-        required_fields = ['client_id']  # access_token can be in client_secret field
-        for field in required_fields:
-            if not self.config.get(field):
-                raise ConversionError(f"Missing required Miro configuration: {field}")
-
-    def _make_request(self, method: str, endpoint: str, data: Dict = None, params: Dict = None) -> Dict:
-        """Make authenticated request to Miro API"""
         headers = {
             'Authorization': f'Bearer {self.access_token}',
             'Content-Type': 'application/json'
@@ -49,6 +174,29 @@ class MiroConverter(BaseConverter):
                 response = requests.delete(url, headers=headers)
             else:
                 raise ConversionError(f"Unsupported HTTP method: {method}")
+
+            # Handle authentication errors with token refresh
+            if response.status_code == 401 and retry_on_auth_error and self.refresh_token:
+                try:
+                    print("Access token expired, attempting refresh...")
+                    self.refresh_access_token()
+
+                    # Retry the request with new token
+                    headers['Authorization'] = f'Bearer {self.access_token}'
+                    if method.upper() == 'GET':
+                        response = requests.get(url, headers=headers, params=params)
+                    elif method.upper() == 'POST':
+                        response = requests.post(url, headers=headers, json=data)
+                    elif method.upper() == 'PUT':
+                        response = requests.put(url, headers=headers, json=data)
+                    elif method.upper() == 'PATCH':
+                        response = requests.patch(url, headers=headers, json=data)
+                    elif method.upper() == 'DELETE':
+                        response = requests.delete(url, headers=headers)
+
+                except Exception as refresh_error:
+                    print(f"Token refresh failed: {refresh_error}")
+                    # Continue with original response
 
             response.raise_for_status()
 
@@ -79,15 +227,27 @@ class MiroConverter(BaseConverter):
     def test_connection(self) -> Dict:
         """Test connection to Miro API"""
         try:
-            # Try to get user boards to test the connection
+            # Try to get user info first (lighter request)
+            try:
+                user_info = self._make_request('GET', 'users/me')
+                user_name = user_info.get('name', 'Unknown')
+                user_email = user_info.get('email', 'Unknown')
+            except:
+                user_name = "Unknown"
+                user_email = "Unknown"
+
+            # Try to get boards to test permissions
             result = self._make_request('GET', 'boards', params={'limit': 1})
 
             return {
                 'status': 'success',
                 'message': 'Successfully connected to Miro API',
                 'details': {
+                    'user_name': user_name,
+                    'user_email': user_email,
                     'boards_accessible': len(result.get('data', [])),
-                    'user_authenticated': True
+                    'user_authenticated': True,
+                    'auth_method': 'Personal Token' if not self.client_id else 'OAuth 2.0'
                 }
             }
 
@@ -96,7 +256,8 @@ class MiroConverter(BaseConverter):
                 'status': 'error',
                 'message': f'Failed to connect to Miro API: {str(e)}',
                 'details': {
-                    'user_authenticated': False
+                    'user_authenticated': False,
+                    'auth_method': 'Personal Token' if not self.client_id else 'OAuth 2.0'
                 }
             }
 
@@ -107,6 +268,20 @@ class MiroConverter(BaseConverter):
                 'details': {
                     'user_authenticated': False
                 }
+            }
+
+    def get_user_info(self) -> Dict:
+        """Get current user information"""
+        try:
+            user_info = self._make_request('GET', 'users/me')
+            return {
+                'success': True,
+                'user': user_info
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e)
             }
 
     def convert(self, parsed_diagram: Dict, options: Dict = None) -> Dict:

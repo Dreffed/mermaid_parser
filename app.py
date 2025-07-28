@@ -66,6 +66,25 @@ with app.app_context():
         print('Admin User added!')
     print('Database initialized successfully!')
 
+# Add custom Jinja2 filters
+@app.template_filter('from_json')
+def from_json_filter(value):
+    """Convert JSON string to Python object"""
+    if not value:
+        return {}
+    try:
+        return json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+@app.template_filter('to_json')
+def to_json_filter(value):
+    """Convert Python object to JSON string"""
+    try:
+        return json.dumps(value)
+    except (TypeError, ValueError):
+        return '{}'
+
 # Main Routes
 @app.route('/')
 def index():
@@ -270,9 +289,18 @@ def admin_platform_config(platform):
             db.session.rollback()
             flash(f'Error saving configuration: {str(e)}')
 
+    # Parse additional_config for template
+    additional_config = {}
+    if config and config.additional_config:
+        try:
+            additional_config = json.loads(config.additional_config)
+        except (json.JSONDecodeError, TypeError):
+            additional_config = {}
+
     return render_template('admin/platform_config.html',
                          platform=platform,
-                         config=config)
+                         config=config,
+                         additional_config=additional_config)  # Pass parsed config
 
 @app.route('/admin/test/<platform>')
 @login_required
@@ -298,6 +326,108 @@ def test_platform(platform):
         return jsonify({'success': True, 'result': result})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 400
+
+
+@app.route('/admin/miro/oauth/start')
+@login_required
+def miro_oauth_start():
+    """Start Miro OAuth flow"""
+    if not current_user.is_admin:
+        return redirect(url_for('index'))
+
+    config = PlatformConfig.query.filter_by(platform='miro').first()
+    if not config or not config.client_id:
+        flash('Miro OAuth not configured. Please add client_id and client_secret first.')
+        return redirect(url_for('admin_platform_config', platform='miro'))
+
+    try:
+        converter = MiroConverter(config.get_config())
+        auth_url = converter.get_auth_url(state='admin_oauth')
+        return redirect(auth_url)
+    except Exception as e:
+        flash(f'Error starting OAuth flow: {str(e)}')
+        return redirect(url_for('admin_platform_config', platform='miro'))
+
+@app.route('/admin/miro/oauth/callback')
+@login_required
+def miro_oauth_callback():
+    """Handle Miro OAuth callback"""
+    if not current_user.is_admin:
+        return redirect(url_for('index'))
+
+    code = request.args.get('code')
+    state = request.args.get('state')
+    error = request.args.get('error')
+
+    if error:
+        flash(f'OAuth error: {error}')
+        return redirect(url_for('admin_platform_config', platform='miro'))
+
+    if not code:
+        flash('No authorization code received')
+        return redirect(url_for('admin_platform_config', platform='miro'))
+
+    config = PlatformConfig.query.filter_by(platform='miro').first()
+    if not config:
+        flash('Miro configuration not found')
+        return redirect(url_for('admin_platform_config', platform='miro'))
+
+    try:
+        converter = MiroConverter(config.get_config())
+        token_response = converter.exchange_code_for_token(code)
+
+        # Update configuration with tokens
+        additional_config = json.loads(config.additional_config or '{}')
+        additional_config['access_token'] = token_response.get('access_token')
+        additional_config['refresh_token'] = token_response.get('refresh_token')
+        additional_config['token_type'] = token_response.get('token_type', 'Bearer')
+        additional_config['expires_in'] = token_response.get('expires_in')
+
+        config.additional_config = json.dumps(additional_config)
+        db.session.commit()
+
+        flash('✅ Miro OAuth completed successfully! Access token saved.')
+        return redirect(url_for('admin_platform_config', platform='miro'))
+
+    except Exception as e:
+        flash(f'OAuth callback error: {str(e)}')
+        return redirect(url_for('admin_platform_config', platform='miro'))
+
+@app.route('/admin/miro/oauth/refresh')
+@login_required
+def miro_oauth_refresh():
+    """Manually refresh Miro access token"""
+    if not current_user.is_admin:
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    config = PlatformConfig.query.filter_by(platform='miro').first()
+    if not config:
+        return jsonify({'error': 'Miro not configured'}), 400
+
+    try:
+        converter = MiroConverter(config.get_config())
+        token_response = converter.refresh_access_token()
+
+        # Update stored tokens
+        additional_config = json.loads(config.additional_config or '{}')
+        additional_config['access_token'] = token_response.get('access_token')
+        if 'refresh_token' in token_response:
+            additional_config['refresh_token'] = token_response.get('refresh_token')
+
+        config.additional_config = json.dumps(additional_config)
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'message': 'Access token refreshed successfully'
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 400
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)

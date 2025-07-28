@@ -1,4 +1,3 @@
-<!-- ===== templates/admin/platform_config.html ===== -->
 {% extends "admin/base.html" %}
 
 {% block content %}
@@ -14,12 +13,12 @@
             <div class="card-body">
                 <form method="POST">
                     <div class="mb-3">
-                        <label for="client_id" class="form-label">Client ID / Access Token</label>
+                        <label for="client_id" class="form-label">Client ID</label>
                         <input type="text" class="form-control" id="client_id" name="client_id"
                                value="{{ config.client_id if config else '' }}" required>
                         <div class="form-text">
                             {% if platform == 'miro' %}
-                                Get your access token from <a href="https://developers.miro.com/" target="_blank">Miro Developer Portal</a>
+                                Your Miro app client ID from <a href="https://developers.miro.com/" target="_blank">Miro Developer Portal</a>
                             {% else %}
                                 Enter your {{ platform }} client ID
                             {% endif %}
@@ -27,34 +26,37 @@
                     </div>
 
                     <div class="mb-3">
-                        <label for="client_secret" class="form-label">
-                            {% if platform == 'miro' %}Access Token{% else %}Client Secret{% endif %}
-                        </label>
+                        <label for="client_secret" class="form-label">Client Secret</label>
                         <input type="password" class="form-control" id="client_secret" name="client_secret"
                                value="{{ config.client_secret if config else '' }}">
                         <div class="form-text">
                             {% if platform == 'miro' %}
-                                For development, you can use your access token here as well
+                                Your Miro app client secret
                             {% else %}
                                 Your {{ platform }} client secret
                             {% endif %}
                         </div>
                     </div>
 
-                    {% if platform != 'miro' %}
                     <div class="mb-3">
                         <label for="redirect_url" class="form-label">Redirect URL</label>
                         <input type="url" class="form-control" id="redirect_url" name="redirect_url"
-                               value="{{ config.redirect_url if config else '' }}">
-                        <div class="form-text">OAuth redirect URL for your application</div>
+                               value="{{ config.redirect_url if config else request.url_root + 'admin/' + platform + '/oauth/callback' }}">
+                        <div class="form-text">
+                            OAuth redirect URL. Default: {{ request.url_root }}admin/{{ platform }}/oauth/callback
+                        </div>
                     </div>
-                    {% endif %}
 
                     <div class="mb-3">
                         <label for="additional_config" class="form-label">Additional Configuration (JSON)</label>
                         <textarea class="form-control" id="additional_config" name="additional_config" rows="4"
-                                  placeholder='{"key": "value"}'>{{ config.additional_config if config else '{}' }}</textarea>
-                        <div class="form-text">Additional platform-specific settings in JSON format</div>
+                                  placeholder='{"access_token": "optional-personal-token"}'>{{ config.additional_config if config else '{}' }}</textarea>
+                        <div class="form-text">
+                            Additional platform-specific settings in JSON format.
+                            {% if platform == 'miro' %}
+                            For development, you can add: {"access_token": "your-personal-token"}
+                            {% endif %}
+                        </div>
                     </div>
 
                     <div class="mb-3 form-check">
@@ -93,17 +95,26 @@
             </div>
             <div class="card-body">
                 {% if platform == 'miro' %}
-                <h6>Miro Setup:</h6>
-                <ol class="small">
-                    <li>Go to <a href="https://developers.miro.com/" target="_blank">Miro Developer Portal</a></li>
-                    <li>Create a new app or use existing</li>
-                    <li>Copy your access token</li>
-                    <li>Paste it in the Client ID field</li>
-                    <li>Enable the platform and test connection</li>
-                </ol>
+                <h6>Miro Setup Options:</h6>
 
-                <div class="alert alert-info">
-                    <strong>Note:</strong> For development, you can use the same access token in both fields.
+                <div class="mb-3">
+                    <strong>Option 1: Personal Access Token (Development)</strong>
+                    <ol class="small">
+                        <li>Go to <a href="https://developers.miro.com/" target="_blank">Miro Developer Portal</a></li>
+                        <li>Create a new app</li>
+                        <li>Copy your Personal Access Token</li>
+                        <li>Add it to Additional Configuration: <code>{"access_token": "your-token"}</code></li>
+                    </ol>
+                </div>
+
+                <div class="mb-3">
+                    <strong>Option 2: OAuth 2.0 (Production)</strong>
+                    <ol class="small">
+                        <li>Create a Miro app with OAuth settings</li>
+                        <li>Set redirect URI: <code>{{ request.url_root }}admin/miro/oauth/callback</code></li>
+                        <li>Enter Client ID and Client Secret above</li>
+                        <li>Save, then use OAuth flow below</li>
+                    </ol>
                 </div>
                 {% else %}
                 <h6>{{ platform.title() }} Setup:</h6>
@@ -111,6 +122,47 @@
                 {% endif %}
             </div>
         </div>
+
+        {% if platform == 'miro' and config and config.client_id and config.client_secret %}
+        <div class="card mt-3">
+            <div class="card-header">
+                <h6 class="card-title mb-0">
+                    <i class="fas fa-key me-2"></i>
+                    OAuth 2.0 Authentication
+                </h6>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <strong>OAuth Status:</strong>
+                    {% if additional_config and additional_config.access_token %}
+                        <span class="badge bg-success">✅ Authenticated</span>
+                        <p class="small text-muted mt-2">Access token is available. You can test the connection.</p>
+                    {% else %}
+                        <span class="badge bg-warning">⚠️ Not Authenticated</span>
+                        <p class="small text-muted mt-2">OAuth credentials configured but no access token.</p>
+                    {% endif %}
+                </div>
+
+                <div class="d-flex gap-2 flex-wrap">
+                    <a href="{{ url_for('miro_oauth_start') }}" class="btn btn-primary btn-sm">
+                        <i class="fas fa-sign-in-alt me-2"></i>Start OAuth Flow
+                    </a>
+
+                    {% if additional_config and additional_config.refresh_token %}
+                    <button class="btn btn-outline-secondary btn-sm" onclick="refreshMiroToken()">
+                        <i class="fas fa-sync me-2"></i>Refresh Token
+                    </button>
+                    {% endif %}
+
+                    {% if additional_config and additional_config.access_token %}
+                    <button class="btn btn-outline-info btn-sm" onclick="showTokenInfo()">
+                        <i class="fas fa-info me-2"></i>Token Info
+                    </button>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
 
         {% if config and config.last_tested %}
         <div class="card mt-3">
@@ -139,7 +191,7 @@ function testConnection() {
         .then(response => response.json())
         .then(data => {
             if (data.success) {
-                alert(`✅ Connection successful!\n${data.result.message}`);
+                alert(`✅ Connection successful!\n${data.result.message}\n\nDetails:\n${JSON.stringify(data.result.details, null, 2)}`);
                 location.reload(); // Refresh to show updated last tested time
             } else {
                 alert(`❌ Connection failed:\n${data.error}`);
@@ -149,6 +201,47 @@ function testConnection() {
             alert(`❌ Error testing connection:\n${error.message}`);
         });
 }
+
+{% if platform == 'miro' %}
+function refreshMiroToken() {
+    fetch('/admin/miro/oauth/refresh')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('✅ Token refreshed successfully!');
+                location.reload();
+            } else {
+                alert(`❌ Token refresh failed: ${data.error}`);
+            }
+        })
+        .catch(error => {
+            alert(`❌ Error: ${error.message}`);
+        });
+}
+
+function showTokenInfo() {
+    const additionalConfig = {{ additional_config | tojson }};
+    let info = 'Token Information:\n\n';
+
+    if (additionalConfig.access_token) {
+        const tokenPreview = additionalConfig.access_token.substring(0, 10) + '...';
+        info += `Access Token: ${tokenPreview}\n`;
+    }
+
+    if (additionalConfig.refresh_token) {
+        info += `Refresh Token: Available\n`;
+    }
+
+    if (additionalConfig.token_type) {
+        info += `Token Type: ${additionalConfig.token_type}\n`;
+    }
+
+    if (additionalConfig.expires_in) {
+        info += `Expires In: ${additionalConfig.expires_in} seconds\n`;
+    }
+
+    alert(info);
+}
+{% endif %}
 </script>
 {% endblock %}
-
