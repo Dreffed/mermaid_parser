@@ -428,6 +428,29 @@ def miro_oauth_refresh():
             'error': str(e)
         }), 400
 
+@app.route('/debug/miro/endpoints')
+@login_required
+def debug_miro_endpoints():
+    """Debug Miro OAuth endpoints"""
+    if not current_user.is_admin:
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    return jsonify({
+        'correct_endpoints': {
+            'authorize_url': 'https://miro.com/oauth/authorize',
+            'token_url': 'https://api.miro.com/v1/oauth/token',
+            'api_base': 'https://api.miro.com/v2'
+        },
+        'incorrect_endpoints': {
+            'wrong_token_url': 'https://miro.com/oauth/token/',  # This was causing 404
+            'wrong_token_url2': 'https://miro.com/oauth/token'
+        },
+        'test_urls': {
+            'auth_test': 'https://miro.com/oauth/authorize?response_type=code&client_id=test',
+            'api_test': 'https://api.miro.com/v2/users/me'
+        }
+    })
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
