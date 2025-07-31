@@ -128,18 +128,44 @@ def parse_mermaid():
 def convert_diagram():
     """Convert parsed Mermaid diagram to target platform"""
     try:
+        # Get and validate request data
         data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No JSON data provided'}), 400
+
+        print(f"=== CONVERT REQUEST DEBUG ===")
+        print(f"Request data keys: {list(data.keys())}")
+        print(f"Request data: {data}")
+
         mermaid_code = data.get('code', '')
-        target_platform = data.get('platform', 'miro')
+        target_platform = data.get('platform', '')
         options = data.get('options', {})
 
-        if not mermaid_code.strip():
+        # Validate required fields
+        if not mermaid_code or not mermaid_code.strip():
             return jsonify({'error': 'No Mermaid code provided'}), 400
 
-        # Parse first
-        parsed_result = mermaid_parser.parse(mermaid_code)
+        if not target_platform:
+            return jsonify({'error': 'No target platform specified'}), 400
+
+        print(f"Mermaid code length: {len(mermaid_code)}")
+        print(f"Target platform: {target_platform}")
+        print(f"Options: {options}")
+
+        # Parse Mermaid code first
+        try:
+            print("=== PARSING MERMAID ===")
+            parsed_result = mermaid_parser.parse(mermaid_code)
+            print(f"Parse successful! Type: {parsed_result['type']}")
+            print(f"Nodes: {len(parsed_result['nodes'])}, Edges: {len(parsed_result['edges'])}")
+        except Exception as parse_error:
+            print(f"Parse error: {parse_error}")
+            return jsonify({
+                'error': f'Failed to parse Mermaid diagram: {str(parse_error)}'
+            }), 400
 
         # Get platform configuration
+        print("=== PLATFORM CONFIG ===")
         platform_config = PlatformConfig.query.filter_by(
             platform=target_platform,
             is_active=True
@@ -150,61 +176,162 @@ def convert_diagram():
                 'error': f'No active configuration found for {target_platform}. Please configure in admin panel.'
             }), 400
 
+        print(f"Platform config found: {platform_config.platform}")
+        print(f"Config has client_id: {bool(platform_config.client_id)}")
+        print(f"Config has client_secret: {bool(platform_config.client_secret)}")
+
+        # Get full configuration
+        try:
+            full_config = platform_config.get_config()
+            print(f"Full config keys: {list(full_config.keys())}")
+            print(f"Has access_token: {bool(full_config.get('access_token'))}")
+        except Exception as config_error:
+            print(f"Config error: {config_error}")
+            return jsonify({
+                'error': f'Invalid platform configuration: {str(config_error)}'
+            }), 400
+
         # Initialize converter
-        if target_platform == 'miro':
-            converter = MiroConverter(platform_config.get_config())
-        else:
-            return jsonify({'error': f'Platform {target_platform} not yet supported'}), 400
+        print("=== INITIALIZING CONVERTER ===")
+        try:
+            if target_platform == 'miro':
+                converter = MiroConverter(full_config)
+                print("Miro converter initialized successfully")
+            else:
+                return jsonify({'error': f'Platform {target_platform} not yet supported'}), 400
+        except Exception as converter_error:
+            print(f"Converter initialization error: {converter_error}")
+            return jsonify({
+                'error': f'Failed to initialize {target_platform} converter: {str(converter_error)}'
+            }), 400
 
         # Perform conversion
-        conversion_result = converter.convert(parsed_result, options)
+        print("=== PERFORMING CONVERSION ===")
+        try:
+            conversion_result = converter.convert(parsed_result, options)
+            print(f"Conversion successful! Result keys: {list(conversion_result.keys())}")
+        except Exception as conversion_error:
+            print(f"Conversion error: {conversion_error}")
+            print(f"Conversion error type: {type(conversion_error)}")
+            return jsonify({
+                'error': f'Conversion failed: {str(conversion_error)}'
+            }), 400
 
         # Save to history
-        history = ConversionHistory(
-            id=str(uuid.uuid4()),
-            source_code=mermaid_code,
-            target_platform=target_platform,
-            result_url=conversion_result.get('url'),
-            status='success',
-            created_at=datetime.utcnow()
-        )
-        db.session.add(history)
-        db.session.commit()
+        try:
+            history = ConversionHistory(
+                id=str(uuid.uuid4()),
+                source_code=mermaid_code,
+                target_platform=target_platform,
+                result_url=conversion_result.get('url'),
+                status='success',
+                created_at=datetime.utcnow()
+            )
+            db.session.add(history)
+            db.session.commit()
+            print(f"History saved with ID: {history.id}")
+        except Exception as history_error:
+            print(f"History save error: {history_error}")
+            # Don't fail the request for history errors
 
+        print("=== CONVERSION COMPLETE ===")
         return jsonify({
             'success': True,
-            'conversion_id': history.id,
+            'conversion_id': history.id if 'history' in locals() else None,
             'platform': target_platform,
             'url': conversion_result.get('url'),
             'board_id': conversion_result.get('board_id'),
+            'shapes_created': conversion_result.get('shapes_created', 0),
+            'connectors_created': conversion_result.get('connectors_created', 0),
             'message': f'Successfully converted to {target_platform}!'
         })
 
-    except ConversionError as e:
-        return jsonify({
-            'success': False,
-            'error': f'Conversion failed: {str(e)}'
-        }), 400
     except Exception as e:
+        print(f"=== CONVERT API ERROR ===")
+        print(f"Error type: {type(e)}")
+        print(f"Error message: {str(e)}")
+        import traceback
+        print(f"Traceback: {traceback.format_exc()}")
+
         return jsonify({
             'success': False,
             'error': f'Unexpected error: {str(e)}'
         }), 500
 
+@app.route('/api/test-convert', methods=['POST'])
+@login_required
+def test_convert():
+    """Test conversion with minimal data"""
+    if not current_user.is_admin:
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    try:
+        # Simple test Mermaid diagram
+        test_code = """flowchart TD
+    A[Start] --> B[End]"""
+
+        # Parse it
+        parsed = mermaid_parser.parse(test_code)
+
+        # Get Miro config
+        config = PlatformConfig.query.filter_by(platform='miro').first()
+        converter = MiroConverter(config.get_config())
+
+        # Test board creation only
+        board_data = {'name': 'Test Board'}
+        board_result = converter._make_request('POST', 'boards', board_data)
+
+        return jsonify({
+            'success': True,
+            'message': 'Test successful',
+            'board_id': board_result['id'],
+            'parsed_nodes': len(parsed['nodes']),
+            'parsed_edges': len(parsed['edges'])
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 400
+
 @app.route('/api/platforms')
 def get_platforms():
     """Get available platforms and their status"""
     platforms = PlatformConfig.query.filter_by(is_active=True).all()
+
+    platform_list = []
+    for p in platforms:
+        # Check if platform is configured (either OAuth or personal token)
+        is_configured = False
+
+        if p.platform == 'miro':
+            # For Miro, check for either OAuth credentials OR personal access token
+            has_oauth = bool(p.client_id and p.client_secret)
+
+            # Check for personal access token in additional_config
+            has_personal_token = False
+            if p.additional_config:
+                try:
+                    additional = json.loads(p.additional_config)
+                    has_personal_token = bool(additional.get('access_token'))
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            is_configured = has_oauth or has_personal_token
+        else:
+            # For other platforms, check traditional OAuth credentials
+            is_configured = bool(p.client_id and p.client_secret)
+
+        platform_list.append({
+            'name': p.platform,
+            'display_name': p.platform.title(),
+            'configured': is_configured,
+            'last_tested': p.last_tested.isoformat() if p.last_tested else None
+        })
+
     return jsonify({
-        'platforms': [
-            {
-                'name': p.platform,
-                'display_name': p.platform.title(),
-                'configured': bool(p.client_id and p.client_secret),
-                'last_tested': p.last_tested.isoformat() if p.last_tested else None
-            }
-            for p in platforms
-        ]
+        'platforms': platform_list
     })
 
 @app.route('/api/history')

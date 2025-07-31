@@ -43,6 +43,49 @@ class MiroConverter(BaseConverter):
                 "OAuth flow requires redirect_uri when using client_id and client_secret"
             )
 
+    def _node_to_miro_shape(self, node) -> Dict:
+        """Convert a diagram node to Miro shape data"""
+        print(f"Converting node: {node.id}, label: {getattr(node, 'label', 'N/A')}, type: {getattr(node, 'shape_type', 'N/A')}")
+
+        # Map Mermaid shapes to Miro shapes
+        shape_type_mapping = {
+            'rectangle': 'rectangle',
+            'rounded': 'round_rectangle',
+            'diamond': 'rhombus',
+            'circle': 'circle',
+            'subroutine': 'rectangle',
+            'participant': 'rectangle'
+        }
+
+        miro_shape_type = shape_type_mapping.get(getattr(node, 'shape_type', 'rectangle'), 'rectangle')
+        node_label = getattr(node, 'label', str(node.id))
+
+        # Calculate position
+        x_pos = 0.0
+        y_pos = 0.0
+        if hasattr(node, 'position') and node.position:
+            x_pos = float(node.position[0])
+            y_pos = float(node.position[1])
+
+        # Simplified shape data to avoid parameter issues
+        shape_data = {
+            'data': {
+                'shape': miro_shape_type,
+                'content': str(node_label)
+            },
+            'position': {
+                'x': x_pos,
+                'y': y_pos
+            },
+            'geometry': {
+                'width': 120.0,
+                'height': 80.0
+            }
+            # Removed complex styling that might cause parameter issues
+        }
+
+        return shape_data
+
     def get_auth_url(self, state: str = None) -> str:
         """
         Generate OAuth authorization URL for user consent
@@ -304,6 +347,8 @@ class MiroConverter(BaseConverter):
             options = {}
 
         try:
+            print("=== MIRO CONVERT START ===")
+
             # Validate parsed diagram
             if not isinstance(parsed_diagram, dict):
                 raise ConversionError("Invalid parsed diagram format")
@@ -312,24 +357,30 @@ class MiroConverter(BaseConverter):
             edges = parsed_diagram.get('edges', [])
             diagram_type = parsed_diagram.get('type', 'unknown')
 
+            print(f"Diagram type: {diagram_type}")
+            print(f"Nodes count: {len(nodes)}")
+            print(f"Edges count: {len(edges)}")
+
             if not nodes:
                 raise ConversionError("No nodes found in diagram")
 
             # Create a new board
             board_name = options.get('board_name', f"Mermaid {diagram_type.title()} - {time.strftime('%Y-%m-%d %H:%M')}")
+
+            # Simplified board data to avoid parameter issues
             board_data = {
-                'name': board_name,
-                'policy': {
-                    'permissionsPolicy': {
-                        'collaborationToolsStartAccess': 'all_editors',
-                        'copyAccess': 'anyone',
-                        'sharingAccess': 'private'
-                    }
-                }
+                'name': board_name
             }
 
-            board_result = self._make_request('POST', 'boards', board_data)
-            board_id = board_result['id']
+            print(f"Creating board with data: {board_data}")
+
+            try:
+                board_result = self._make_request('POST', 'boards', board_data)
+                board_id = board_result['id']
+                print(f"Board created successfully: {board_id}")
+            except Exception as board_error:
+                print(f"Board creation failed: {board_error}")
+                raise ConversionError(f"Failed to create Miro board: {str(board_error)}")
 
             # Track created items
             shape_mapping = {}  # node_id -> miro_shape_id
@@ -337,35 +388,54 @@ class MiroConverter(BaseConverter):
             created_connectors = 0
 
             # Convert nodes to Miro shapes
-            for node in nodes:
+            print("=== CREATING SHAPES ===")
+            for i, node in enumerate(nodes):
                 try:
+                    print(f"Creating shape {i+1}/{len(nodes)}: {node.id}")
                     shape_data = self._node_to_miro_shape(node)
+                    print(f"Shape data: {json.dumps(shape_data, indent=2)}")
+
                     shape_result = self._make_request('POST', f'boards/{board_id}/shapes', shape_data)
                     shape_mapping[node.id] = shape_result['id']
                     created_shapes += 1
-                except Exception as e:
-                    print(f"Warning: Failed to create shape for node {node.id}: {str(e)}")
+                    print(f"Shape created successfully: {shape_result['id']}")
+
+                except Exception as shape_error:
+                    print(f"Failed to create shape for node {node.id}: {str(shape_error)}")
+                    # Continue with other shapes instead of failing completely
+
+            print(f"Created {created_shapes} shapes successfully")
 
             # Convert edges to Miro connectors
-            for edge in edges:
+            print("=== CREATING CONNECTORS ===")
+            for i, edge in enumerate(edges):
                 try:
                     if edge.source in shape_mapping and edge.target in shape_mapping:
+                        print(f"Creating connector {i+1}/{len(edges)}: {edge.source} -> {edge.target}")
+
                         connector_data = self._edge_to_miro_connector(
                             edge,
                             shape_mapping[edge.source],
                             shape_mapping[edge.target]
                         )
-                        self._make_request('POST', f'boards/{board_id}/connectors', connector_data)
+                        print(f"Connector data: {json.dumps(connector_data, indent=2)}")
+
+                        connector_result = self._make_request('POST', f'boards/{board_id}/connectors', connector_data)
                         created_connectors += 1
+                        print(f"Connector created successfully: {connector_result.get('id', 'unknown')}")
                     else:
-                        print(f"Warning: Skipping edge {edge.source} -> {edge.target} (missing shapes)")
-                except Exception as e:
-                    print(f"Warning: Failed to create connector for edge {edge.source} -> {edge.target}: {str(e)}")
+                        print(f"Skipping edge {edge.source} -> {edge.target} (missing shapes)")
+
+                except Exception as connector_error:
+                    print(f"Failed to create connector for edge {edge.source} -> {edge.target}: {str(connector_error)}")
+                    # Continue with other connectors
+
+            print(f"Created {created_connectors} connectors successfully")
 
             # Generate board URL
             board_url = f"https://miro.com/app/board/{board_id}/"
 
-            return {
+            result = {
                 'url': board_url,
                 'board_id': board_id,
                 'board_name': board_name,
@@ -376,130 +446,42 @@ class MiroConverter(BaseConverter):
                 'success': True
             }
 
+            print(f"=== MIRO CONVERT SUCCESS ===")
+            print(f"Result: {result}")
+            return result
+
         except ConversionError:
             raise  # Re-raise conversion errors as-is
 
         except Exception as e:
+            print(f"=== MIRO CONVERT ERROR ===")
+            print(f"Error: {str(e)}")
+            import traceback
+            print(f"Traceback: {traceback.format_exc()}")
             raise ConversionError(f"Failed to convert diagram to Miro: {str(e)}")
 
-    def _node_to_miro_shape(self, node) -> Dict:
-        """Convert a diagram node to Miro shape data"""
-        # Map Mermaid shapes to Miro shapes
-        shape_type_mapping = {
-            'rectangle': 'rectangle',
-            'rounded': 'round_rectangle',
-            'diamond': 'rhombus',
-            'circle': 'circle',
-            'subroutine': 'rectangle',
-            'participant': 'rectangle',  # For sequence diagrams
-            'default': 'rectangle'
-        }
-
-        miro_shape_type = shape_type_mapping.get(node.shape_type, 'rectangle')
-
-        # Calculate position - Miro uses center positioning
-        x_pos = float(node.position[0]) if hasattr(node, 'position') and node.position else 0.0
-        y_pos = float(node.position[1]) if hasattr(node, 'position') and node.position else 0.0
-
-        # Shape dimensions based on content and type
-        label_length = len(node.label) if hasattr(node, 'label') else len(str(node.id))
-
-        if miro_shape_type == 'circle':
-            width = max(80.0, min(200.0, label_length * 8 + 40))
-            height = width  # Circles are square
-        elif miro_shape_type == 'rhombus':
-            width = max(100.0, min(250.0, label_length * 10 + 60))
-            height = max(80.0, min(150.0, label_length * 4 + 60))
-        else:
-            width = max(120.0, min(300.0, label_length * 8 + 40))
-            height = 80.0
-
-        shape_data = {
-            'data': {
-                'shape': miro_shape_type,
-                'content': getattr(node, 'label', str(node.id))
-            },
-            'style': {
-                'fillColor': '#ffffff',
-                'borderColor': '#1a1a1a',
-                'borderWidth': 2.0,
-                'borderStyle': 'normal',
-                'fontFamily': 'arial',
-                'fontSize': 14,
-                'textAlign': 'center',
-                'textAlignVertical': 'middle',
-                'color': '#1a1a1a'
-            },
-            'position': {
-                'x': x_pos,
-                'y': y_pos,
-                'origin': 'center'
-            },
-            'geometry': {
-                'width': width,
-                'height': height
-            }
-        }
-
-        return shape_data
 
     def _edge_to_miro_connector(self, edge, start_item_id: str, end_item_id: str) -> Dict:
         """Convert a diagram edge to Miro connector data"""
-        # Map edge types to Miro connector styles
-        connector_style_mapping = {
-            'arrow': 'straight',
-            'dotted_arrow': 'straight',
-            'thick_arrow': 'straight',
-            'line': 'straight',
-            'message': 'straight',
-            'curved': 'curved'
-        }
+        print(f"Converting edge: {edge.source} -> {edge.target}, label: {getattr(edge, 'label', '')}")
 
-        connector_style = connector_style_mapping.get(
-            getattr(edge, 'edge_type', 'arrow'),
-            'straight'
-        )
-
-        # Determine line style and arrow heads
-        line_style = 'normal'
-        start_arrow = 'none'
-        end_arrow = 'arrow'
-
-        edge_type = getattr(edge, 'edge_type', 'arrow')
-
-        if 'dotted' in edge_type or 'dashed' in edge_type:
-            line_style = 'dashed'
-        elif 'thick' in edge_type:
-            # Thicker line
-            pass
-
-        if edge_type == 'line':
-            end_arrow = 'none'  # Plain line, no arrow
-
+        # Simplified connector data
         connector_data = {
             'startItem': {
                 'id': start_item_id
             },
             'endItem': {
                 'id': end_item_id
-            },
-            'style': {
-                'strokeColor': '#1a1a1a',
-                'strokeWidth': 3.0 if 'thick' in edge_type else 2.0,
-                'strokeStyle': line_style,
-                'startArrowhead': start_arrow,
-                'endArrowhead': end_arrow
-            },
-            'captions': []
+            }
+            # Removed complex styling that might cause parameter issues
         }
 
         # Add label if present
         edge_label = getattr(edge, 'label', '')
         if edge_label and edge_label.strip():
-            connector_data['captions'].append({
+            connector_data['captions'] = [{
                 'content': edge_label.strip(),
-                'position': 0.5,  # Middle of the connector
-                'textAlign': 'center'
-            })
+                'position': 0.5
+            }]
 
         return connector_data

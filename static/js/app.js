@@ -219,6 +219,11 @@ class MermaidConverter {
         const platform = document.getElementById('targetPlatform').value;
         const convertBtn = document.getElementById('convertBtn');
 
+        console.log('=== CONVERT DEBUG ===');
+        console.log('Code length:', code.length);
+        console.log('Platform:', platform);
+        console.log('Code preview:', code.substring(0, 100));
+
         if (!code.trim()) {
             this.showAlert('Please enter some Mermaid code', 'warning');
             return;
@@ -235,28 +240,47 @@ class MermaidConverter {
         convertBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Converting...';
 
         try {
+            const requestData = {
+                code: code,
+                platform: platform,
+                options: {
+                    board_name: `Mermaid Conversion - ${new Date().toLocaleString()}`
+                }
+            };
+
+            console.log('Request data:', requestData);
+
             const response = await fetch('/api/convert', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({
-                    code: code,
-                    platform: platform,
-                    options: {
-                        board_name: `Mermaid Conversion - ${new Date().toLocaleString()}`
-                    }
-                })
+                body: JSON.stringify(requestData)
             });
 
-            const data = await response.json();
+            console.log('Response status:', response.status);
+            console.log('Response headers:', Object.fromEntries(response.headers));
+
+            const responseText = await response.text();
+            console.log('Response text:', responseText);
+
+            let data;
+            try {
+                data = JSON.parse(responseText);
+            } catch (parseError) {
+                console.error('Failed to parse response as JSON:', parseError);
+                throw new Error(`Invalid JSON response: ${responseText}`);
+            }
 
             if (data.success) {
+                console.log('Conversion successful:', data);
                 this.showConversionResult(data);
             } else {
+                console.error('Conversion failed:', data);
                 this.showAlert(`Conversion failed: ${data.error}`, 'danger');
             }
         } catch (error) {
+            console.error('Network/unexpected error:', error);
             this.showAlert(`Network error: ${error.message}`, 'danger');
         } finally {
             // Restore button state
